@@ -328,13 +328,13 @@ spec:
         #         echo ""
         #         echo "✅ All validations passed!"
 
-        # params:
-        #   - name: git-url
-        #     value: $(params.git-url)
-        #   - name: git-revision
-        #     value: $(params.git-revision)
-        #   - name: cluster-name
-        #     value: $(tasks.provision-cluster.results.clusterName)
+        params:
+          - name: git-url
+            value: $(params.git-url)
+          - name: git-revision
+            value: $(params.git-revision)
+          - name: cluster-name
+            value: $(tasks.provision-cluster.results.clusterName)
 
     # Note: No cleanup task needed - EaaS automatically cleans up ephemeral resources
     # when the PipelineRun completes, based on the ownerUid reference set during provisioning
