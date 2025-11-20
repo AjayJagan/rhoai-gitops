@@ -1,4 +1,3 @@
-#test pr 
 ---
 apiVersion: tekton.dev/v1
 kind: PipelineRun
@@ -6,75 +5,26 @@ metadata:
   name: rhoai-integration-{{ revision }}
   labels:
     app.kubernetes.io/name: rhoai-gitops
-    app.kubernetes.io/component: validation-pipeline
   annotations:
-    # Trigger only when PR comment contains "/test-integration"
     pipelinesascode.tekton.dev/on-event: "[pull_request]"
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
     pipelinesascode.tekton.dev/on-comment: "^/test-integration"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
-
-    # Add PR comment when pipeline starts
-    pipelinesascode.tekton.dev/on-started: |
-      🚀 **Integration Test Started**
-
-      Provisioning ephemeral OpenShift cluster with RHOAI operators...
-
-      [View pipeline run]({{ console_url }}/k8s/ns/{{ namespace }}/tekton.dev~v1~PipelineRun/{{ run_name }})
-
-    # Add PR comment on success
-    pipelinesascode.tekton.dev/on-success: |
-      ✅ **Integration Test Passed**
-
-      All RHOAI GitOps manifests validated successfully on ephemeral OpenShift cluster!
-
-      <details>
-      <summary>Test Details</summary>
-
-      - OpenShift Version: Auto-selected (latest {{ params.openshift-version-prefix }}.x)
-      - Cluster Type: HyperShift on AWS
-      - Instance Type: {{ params.instance-type }}
-      - Validation: OLM + Server-side dry-run
-
-      [View pipeline run]({{ console_url }}/k8s/ns/{{ namespace }}/tekton.dev~v1~PipelineRun/{{ run_name }})
-      </details>
-
-    # Add PR comment on failure
-    pipelinesascode.tekton.dev/on-failure: |
-      ❌ **Integration Test Failed**
-
-      RHOAI GitOps validation failed on ephemeral cluster.
-
-      [View pipeline logs]({{ console_url }}/k8s/ns/{{ namespace }}/tekton.dev~v1~PipelineRun/{{ run_name }})
-
 spec:
-  pipelineSpec:
-    description: |
-      Validates RHOAI GitOps manifests using an ephemeral OpenShift cluster.
-      This pipeline provisions a temporary cluster via EaaS, validates manifests with RHOAI catalogs,
-      and cleans up the cluster automatically.
+  params:
+    - name: git-url
+      value: "{{ repo_url }}"
+    - name: git-revision
+      value: "{{ revision }}"
 
+  pipelineSpec:
     params:
       - name: git-url
         type: string
-        description: Git repository URL
-
       - name: git-revision
         type: string
-        description: Git revision (branch, tag, or commit SHA)
-
-      - name: openshift-version-prefix
-        type: string
-        description: OpenShift version prefix (e.g., "4.15", "4.16")
-        default: "4.19"
-
-      - name: instance-type
-        type: string
-        description: AWS EC2 instance type for worker nodes
-        default: m5.xlarge
 
     tasks:
-      # Task 1: Provision EaaS space
       - name: provision-eaas-space
         taskRef:
           resolver: git
@@ -91,82 +41,35 @@ spec:
           - name: ownerUid
             value: $(context.pipelineRun.uid)
 
-      # Task 2: Provision ephemeral OpenShift cluster
       - name: provision-cluster
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/konflux-ci/build-definitions.git
+            - name: revision
+              value: main
+            - name: pathInRepo
+              value: task/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
+        params:
+          - name: eaasSpaceSecretRef
+            value: $(tasks.provision-eaas-space.results.secretRef)
+          - name: version
+            value: "4.17.0"
+          - name: instanceType
+            value: "m5.xlarge"
         runAfter:
           - provision-eaas-space
-        taskSpec:
-          results:
-            - name: clusterName
-              value: "$(steps.create-cluster.results.clusterName)"
-          steps:
-            # Get supported OpenShift versions
-            - name: get-supported-versions
-              ref:
-                resolver: git
-                params:
-                  - name: url
-                    value: https://github.com/konflux-ci/build-definitions.git
-                  - name: revision
-                    value: main
-                  - name: pathInRepo
-                    value: stepactions/eaas-get-supported-ephemeral-cluster-versions/0.1/eaas-get-supported-ephemeral-cluster-versions.yaml
-              params:
-                - name: eaasSpaceSecretRef
-                  value: $(tasks.provision-eaas-space.results.secretRef)
 
-            # Pick latest version matching prefix
-            - name: pick-version
-              ref:
-                resolver: git
-                params:
-                  - name: url
-                    value: https://github.com/konflux-ci/build-definitions.git
-                  - name: revision
-                    value: main
-                  - name: pathInRepo
-                    value: stepactions/eaas-get-latest-openshift-version-by-prefix/0.1/eaas-get-latest-openshift-version-by-prefix.yaml
-              params:
-                - name: prefix
-                  value: "$(params.openshift-version-prefix)."
-
-            # Create ephemeral cluster
-            - name: create-cluster
-              ref:
-                resolver: git
-                params:
-                  - name: url
-                    value: https://github.com/konflux-ci/build-definitions.git
-                  - name: revision
-                    value: main
-                  - name: pathInRepo
-                    value: stepactions/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
-              params:
-                - name: eaasSpaceSecretRef
-                  value: $(tasks.provision-eaas-space.results.secretRef)
-                - name: version
-                  value: "$(steps.pick-version.results.version)"
-                - name: instanceType
-                  value: $(params.instance-type)
-
-      # Task 3: Validate manifests on ephemeral cluster
-      - name: validate-manifests
-        runAfter:
-          - provision-cluster
+      - name: test-cluster
         taskSpec:
           params:
-            - name: git-url
+            - name: eaasSpaceSecretRef
               type: string
-            - name: git-revision
+            - name: clusterName
               type: string
-            - name: cluster-name
-              type: string
-          volumes:
-            - name: credentials
-              emptyDir: {}
           steps:
-            # Get cluster credentials
-            - name: get-kubeconfig
+            - name: get-credentials
               ref:
                 resolver: git
                 params:
@@ -178,176 +81,46 @@ spec:
                     value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
               params:
                 - name: eaasSpaceSecretRef
-                  value: $(tasks.provision-eaas-space.results.secretRef)
+                  value: $(params.eaasSpaceSecretRef)
                 - name: clusterName
-                  value: $(params.cluster-name)
+                  value: $(params.clusterName)
                 - name: credentials
-                  value: credentials
+                  value: creds
 
-        #     # Clone repository
-        #     - name: clone-repo
-        #       image: alpine/git:latest
-        #       workingDir: /workspace
-        #       script: |
-        #         #!/bin/sh
-        #         set -e
+            - name: verify-cluster
+              image: quay.io/konflux-ci/appstudio-utils:latest
+              env:
+                - name: KUBECONFIG
+                  value: /credentials/$(steps.get-credentials.results.kubeconfig)
+              volumeMounts:
+                - name: creds
+                  mountPath: /credentials
+              script: |
+                #!/bin/bash
+                set -e
 
-        #         echo "=== Cloning repository ==="
-        #         echo "URL: $(params.git-url)"
-        #         echo "Revision: $(params.git-revision)"
+                echo "=== Cluster Information ==="
+                kubectl version --short || kubectl version
 
-        #         git clone --depth 1 --branch $(params.git-revision) $(params.git-url) /workspace/source
-        #         git config --global --add safe.directory /workspace/source
+                echo ""
+                echo "=== Cluster Nodes ==="
+                kubectl get nodes
 
-        #         echo "✅ Repository cloned"
+                echo ""
+                echo "=== Namespaces ==="
+                kubectl get namespaces | head -20
 
-        #     # Verify OLM is available (pre-installed in OpenShift)
-        #     - name: verify-olm
-        #       image: quay.io/konflux-ci/appstudio-utils:latest
-        #       env:
-        #         - name: KUBECONFIG
-        #           value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
-        #       volumeMounts:
-        #         - name: credentials
-        #           mountPath: /credentials
-        #       script: |
-        #         #!/bin/bash
-        #         set -e
+                echo ""
+                echo "✅ Cluster is accessible and ready!"
 
-        #         echo "=== Verifying OLM is available (pre-installed in OpenShift) ==="
-
-        #         # Check OLM namespace exists
-        #         kubectl get namespace openshift-operator-lifecycle-manager || {
-        #           echo "❌ OLM namespace not found - this should be pre-installed in OpenShift"
-        #           exit 1
-        #         }
-
-        #         # Check OLM operators are running
-        #         kubectl get deployments -n openshift-operator-lifecycle-manager || {
-        #           echo "⚠️ Using alternative OLM namespace 'olm'"
-        #           kubectl get deployments -n olm
-        #         }
-
-        #         # Verify CRDs exist
-        #         kubectl get crd subscriptions.operators.coreos.com || {
-        #           echo "❌ OLM CRDs not found"
-        #           exit 1
-        #         }
-
-        #         echo "✅ OLM is available and ready"
-
-        #     # Install kustomize
-        #     - name: install-kustomize
-        #       image: quay.io/konflux-ci/appstudio-utils:latest
-        #       workingDir: /workspace/source
-        #       script: |
-        #         #!/bin/bash
-        #         set -e
-
-        #         echo "=== Installing kustomize ==="
-        #         curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-        #         chmod +x kustomize
-        #         ./kustomize version
-
-        #         echo "✅ kustomize installed"
-
-        #     # Validate dependencies/operators
-        #     - name: validate-dependencies
-        #       image: quay.io/konflux-ci/appstudio-utils:latest
-        #       env:
-        #         - name: KUBECONFIG
-        #           value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
-        #       volumeMounts:
-        #         - name: credentials
-        #           mountPath: /credentials
-        #       workingDir: /workspace/source
-        #       script: |
-        #         #!/bin/bash
-        #         set -e
-
-        #         echo "=== Validating dependencies/operators ==="
-        #         ./kustomize build dependencies/operators/ | kubectl apply --dry-run=server -f - || {
-        #           echo "❌ Validation failed for dependencies/operators"
-        #           exit 1
-        #         }
-        #         echo "✅ dependencies/operators validation passed"
-
-        #     # Validate components
-        #     - name: validate-components
-        #       image: quay.io/konflux-ci/appstudio-utils:latest
-        #       env:
-        #         - name: KUBECONFIG
-        #           value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
-        #       volumeMounts:
-        #         - name: credentials
-        #           mountPath: /credentials
-        #       workingDir: /workspace/source
-        #       script: |
-        #         #!/bin/bash
-        #         set -e
-
-        #         echo "=== Validating components ==="
-        #         ./kustomize build components/ | kubectl apply --dry-run=server -f - || {
-        #           echo "❌ Validation failed for components"
-        #           exit 1
-        #         }
-        #         echo "✅ components validation passed"
-
-        #     # Show cluster info
-        #     - name: show-cluster-info
-        #       image: quay.io/konflux-ci/appstudio-utils:latest
-        #       env:
-        #         - name: KUBECONFIG
-        #           value: "/credentials/$(steps.get-kubeconfig.results.kubeconfig)"
-        #       volumeMounts:
-        #         - name: credentials
-        #           mountPath: /credentials
-        #       script: |
-        #         #!/bin/bash
-
-        #         echo ""
-        #         echo "=== Cluster Information ==="
-        #         echo "Cluster: $(params.cluster-name)"
-        #         kubectl version --short || true
-
-        #         echo ""
-        #         echo "=== Installed OLM CRDs ==="
-        #         kubectl get crds | grep -E "(operators.coreos.com|olm.operatorframework.io)" || echo "No OLM CRDs found"
-
-        #         echo ""
-        #         echo "=== OLM Operators ==="
-        #         # Check OpenShift OLM namespace first, fallback to olm namespace
-        #         if kubectl get namespace openshift-operator-lifecycle-manager 2>/dev/null; then
-        #           kubectl get deployments -n openshift-operator-lifecycle-manager
-        #         elif kubectl get namespace olm 2>/dev/null; then
-        #           kubectl get deployments -n olm
-        #         else
-        #           echo "⚠️ No OLM namespace found"
-        #         fi
-
-        #         echo ""
-        #         echo "✅ All validations passed!"
+          volumes:
+            - name: creds
+              emptyDir: {}
 
         params:
-          - name: git-url
-            value: $(params.git-url)
-          - name: git-revision
-            value: $(params.git-revision)
-          - name: cluster-name
+          - name: eaasSpaceSecretRef
+            value: $(tasks.provision-eaas-space.results.secretRef)
+          - name: clusterName
             value: $(tasks.provision-cluster.results.clusterName)
-
-    # Note: No cleanup task needed - EaaS automatically cleans up ephemeral resources
-    # when the PipelineRun completes, based on the ownerUid reference set during provisioning
-
-  params:
-    - name: git-url
-      value: "{{ repo_url }}"
-    - name: git-revision
-      value: "{{ revision }}"
-    - name: openshift-version-prefix
-      value: "4.19"  # Can be overridden via comment: /test-integration version=4.16
-    - name: instance-type
-      value: m5.xlarge  # EC2 instance type for RHOAI stack
-
-  timeouts:
-    pipeline: 1h  # Total timeout for integration test
+        runAfter:
+          - provision-cluster
