@@ -1,3 +1,4 @@
+#test comment
 ---
 apiVersion: tekton.dev/v1
 kind: PipelineRun
@@ -11,6 +12,7 @@ metadata:
     pipelinesascode.tekton.dev/on-comment: "^/test-integration"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
+  serviceAccountName: build-pipeline-rhoai-gitops-poc
   params:
     - name: git-url
       value: "{{ repo_url }}"
@@ -49,9 +51,6 @@ spec:
           results:
             - name: clusterName
               value: $(steps.create-cluster.results.clusterName)
-          volumes:
-            - name: workdir
-              emptyDir: {}
           steps:
             - name: create-cluster
               ref:
@@ -70,9 +69,6 @@ spec:
                   value: "4.17.0"
                 - name: instanceType
                   value: "m5.xlarge"
-              volumeMounts:
-                - name: workdir
-                  mountPath: /workspace
         params:
           - name: eaasSpaceSecretRef
             value: $(tasks.provision-eaas-space.results.secretRef)
