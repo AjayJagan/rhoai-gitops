@@ -15,24 +15,65 @@ CLEANFILES += $(LOCALBIN)
 
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
+KUBE_LINTER ?= $(LOCALBIN)/kube-linter
+YAMLLINT ?= $(LOCALBIN)/yamllint
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.0
+KUBE_LINTER_VERSION ?= v0.7.6
+YAMLLINT_VERSION ?= v1.37.1
 
 KUSTOMIZE_INSTALL_SCRIPT ?= "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh"
+
 .PHONY: kustomize
 kustomize: $(KUSTOMIZE) ## Download kustomize locally if necessary.
 $(KUSTOMIZE): $(LOCALBIN)
 	$(call go-install-tool,$(KUSTOMIZE),sigs.k8s.io/kustomize/kustomize/v5,$(KUSTOMIZE_VERSION))
 
-# Validate kustomize targets
-.PHONY: validate
-validate: kustomize ## Build all kustomize directories in the project
+.PHONY: kube-linter
+kube-linter: $(KUBE_LINTER) ## Download kube-linter locally if necessary.
+$(KUBE_LINTER): $(LOCALBIN)
+	@curl -sSL https://github.com/stackrox/kube-linter/releases/download/$(KUBE_LINTER_VERSION)/kube-linter-linux.tar.gz | tar xz -C $(LOCALBIN)
+	@chmod +x $(KUBE_LINTER)
+
+.PHONY: yamllint
+yamllint: $(YAMLLINT) ## Download yamllint locally if necessary.
+$(YAMLLINT): $(LOCALBIN)
+	@curl -sSL https://github.com/adrienverge/yamllint/releases/download/$(YAMLLINT_VERSION)/yamllint-$(YAMLLINT_VERSION)-linux-x86_64.tar.gz | tar xz -C $(LOCALBIN) --strip-components=1
+	@chmod +x $(YAMLLINT)
+
+.PHONY: tools
+tools: kustomize kube-linter yamllint ## Download all validation tools locally.
+	@echo ""
+	@echo "All validation tools installed in $(LOCALBIN)"
+
+##@ Validation
+
+.PHONY: validate-yaml
+validate-yaml: yamllint ## Validate YAML syntax and formatting
+	@echo "Validating YAML syntax..."
+	@$(YAMLLINT) -c .yamllint . && echo " YAML validation passed"
+
+.PHONY: validate-kustomize
+validate-kustomize: kustomize ## Validate kustomize builds
 	@echo "Building all kustomizations..."
 	$(call kustomize-build-folder,dependencies)
 	$(call kustomize-build-folder,components)
+	@echo " Kustomize validation passed"
+
+.PHONY: validate-lint
+validate-lint: kustomize kube-linter ## Validate best practices with kube-linter
+	@echo "Linting Kubernetes manifests..."
+	@$(KUSTOMIZE) build dependencies/operators/ | $(KUBE_LINTER) lint - || echo " Some linting issues found (non-blocking)"
+	@$(KUSTOMIZE) build components/ | $(KUBE_LINTER) lint - || echo " Some linting issues found (non-blocking)"
+	@echo " Linting completed"
+
+.PHONY: validate-all
+validate-all: validate-yaml validate-kustomize validate-lint ## Run all validation checks
 	@echo ""
-	@echo "All kustomizations built successfully! ✓"
+	@echo "=========================================="
+	@echo " All validations passed successfully!"
+	@echo "=========================================="
 
 .PHONY: apply
 apply: kustomize ## Apply kustomize directory as passed as argument

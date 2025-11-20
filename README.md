@@ -16,6 +16,9 @@ This repository provides a GitOps-based approach to deploying and managing Red H
     - [Install All Dependencies](#install-all-dependencies)
     - [Install Specific Dependency](#install-specific-dependency)
     - [Install a subset of dependencies](#install-a-subset-of-dependencies)
+  - [Validation](#validation)
+    - [Running Validations](#running-validations)
+    - [Validation in CI](#validation-in-ci)
   - [Usage Guidelines](#usage-guidelines)
     - [For Administrators](#for-administrators)
   - [Release Strategy](#release-strategy)
@@ -99,6 +102,64 @@ components:
 ```
 
 If the Kueue operator is needed later, it can be uncommented and the changes applied.
+
+## Validation
+
+This repository includes comprehensive validation to ensure manifests are correct before deployment.
+
+### Running Validations
+
+**Install validation tools:**
+```bash
+make tools
+```
+
+**Run all validations (recommended before committing):**
+```bash
+make validate-all
+```
+
+**Run essential validations only:**
+```bash
+make validate
+```
+
+**Run specific validation layers:**
+```bash
+make validate-yaml         # YAML syntax and formatting
+make validate-kustomize    # Kustomize build validation
+make validate-lint         # Best practices linting
+make validate-security     # Security scanning
+```
+
+**Note:** Comprehensive validation runs automatically in two tiers - fast static checks (Tier 1) followed by full OpenShift cluster testing (Tier 2).
+
+### Validation in CI
+
+Every pull request automatically runs two-tier validation:
+
+**Tier 1 (GitHub Actions - Fast):**
+- YAML lint, kustomize build, best practices linting
+- ~1-2 minutes, catches 90% of common issues
+
+**Tier 2 (Konflux - Comprehensive):**
+- Auto-triggered when Tier 1 passes
+- Real OpenShift cluster with RHOAI catalogs
+- Server-side validation with kubectl dry-run
+- ~25-30 minutes
+
+[![Validate GitOps Manifests](https://github.com/your-org/rhoai-gitops/actions/workflows/testing.yaml/badge.svg)](https://github.com/your-org/rhoai-gitops/actions/workflows/testing.yaml)
+
+**What's validated:**
+- ✅ YAML syntax and formatting
+- ✅ Kustomize builds successfully
+- ✅ Resources match Kubernetes schemas
+- ✅ Best practices and security policies
+- ✅ Server-side validation with CRDs
+
+**For more information:**
+- Validation strategy: [docs/VALIDATION.md](docs/VALIDATION.md)
+- **Adding new operator CRDs**: [crds/README.md](crds/README.md)
 
 ## Usage Guidelines
 

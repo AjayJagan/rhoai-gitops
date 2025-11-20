@@ -1,0 +1,15 @@
+# Dummy Dockerfile for Konflux Component
+# This file exists to satisfy the Component.spec.dockerfileUrl field requirement
+# Actual validation uses custom pipelines in .tekton/ - no container is built
+
+FROM registry.access.redhat.com/ubi9/ubi-minimal:latest
+
+LABEL name="rhoai-gitops-validator" \
+      description="GitOps validation component - does not build containers" \
+      maintainer="RHOAI Team"
+
+# This container is never actually built or used
+# The configure-pac-no-mr annotation prevents the build pipeline from running
+# Custom validation pipelines in .tekton/ handle all testing
+
+CMD ["echo", "This is a GitOps validation component - see .tekton/ for pipelines"]
