@@ -11,6 +11,7 @@ metadata:
     pipelinesascode.tekton.dev/on-comment: "^/test-integration"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
+  serviceAccountName: build-pipeline-rhoai-gitops-poc
   params:
     - name: git-url
       value: "{{ repo_url }}"
