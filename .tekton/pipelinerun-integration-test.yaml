@@ -49,6 +49,9 @@ spec:
           results:
             - name: clusterName
               value: $(steps.create-cluster.results.clusterName)
+          volumes:
+            - name: workdir
+              emptyDir: {}
           steps:
             - name: create-cluster
               ref:
@@ -67,6 +70,9 @@ spec:
                   value: "4.17.0"
                 - name: instanceType
                   value: "m5.xlarge"
+              volumeMounts:
+                - name: workdir
+                  mountPath: /workspace
         params:
           - name: eaasSpaceSecretRef
             value: $(tasks.provision-eaas-space.results.secretRef)
