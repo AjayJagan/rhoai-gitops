@@ -42,22 +42,34 @@ spec:
             value: $(context.pipelineRun.uid)
 
       - name: provision-cluster
-        taskRef:
-          resolver: git
+        taskSpec:
           params:
-            - name: url
-              value: https://github.com/konflux-ci/build-definitions.git
-            - name: revision
-              value: main
-            - name: pathInRepo
-              value: task/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
+            - name: eaasSpaceSecretRef
+              type: string
+          results:
+            - name: clusterName
+              value: $(steps.create-cluster.results.clusterName)
+          steps:
+            - name: create-cluster
+              ref:
+                resolver: git
+                params:
+                  - name: url
+                    value: https://github.com/konflux-ci/build-definitions.git
+                  - name: revision
+                    value: main
+                  - name: pathInRepo
+                    value: stepactions/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
+              params:
+                - name: eaasSpaceSecretRef
+                  value: $(params.eaasSpaceSecretRef)
+                - name: version
+                  value: "4.17.0"
+                - name: instanceType
+                  value: "m5.xlarge"
         params:
           - name: eaasSpaceSecretRef
             value: $(tasks.provision-eaas-space.results.secretRef)
-          - name: version
-            value: "4.17.0"
-          - name: instanceType
-            value: "m5.xlarge"
         runAfter:
           - provision-eaas-space
 
