@@ -26,11 +26,11 @@ spec:
           - name: workspace
             emptyDir: {}
       stepSpecs:
-        - name: provision-space
+        - name: request-space
           volumeMounts:
             - name: workspace
-              mountPath: /workspace
-          workingDir: /workspace
+              mountPath: /workspace/source
+          workingDir: /workspace/source
   params:
     - name: git-url
       value: "{{ repo_url }}"
