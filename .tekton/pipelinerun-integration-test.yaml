@@ -1,9 +1,8 @@
-#test comment
 ---
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  name: rhoai-integration-{{ revision }}
+  name: rhoai-integration-validation
   labels:
     app.kubernetes.io/name: rhoai-gitops
   annotations:
@@ -13,6 +12,11 @@ metadata:
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
   serviceAccountName: build-pipeline-rhoai-gitops-poc
+  taskRunTemplate:
+    podTemplate:
+      env:
+        - name: HOME
+          value: /tekton/home
   params:
     - name: git-url
       value: "{{ repo_url }}"
@@ -44,12 +48,18 @@ spec:
             value: $(context.pipelineRun.uid)
 
       - name: provision-cluster
-        runAfter:
-          - provision-eaas-space
         taskSpec:
+          params:
+            - name: eaasSpaceSecretRef
+              type: string
           results:
             - name: clusterName
               value: $(steps.create-cluster.results.clusterName)
+          stepTemplate:
+            env:
+              - name: HOME
+                value: /tekton/home
+            workingDir: /workspace
           steps:
             - name: create-cluster
               ref:
@@ -63,21 +73,26 @@ spec:
                     value: stepactions/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
               params:
                 - name: eaasSpaceSecretRef
-                  value: $(tasks.provision-eaas-space.results.secretRef)
+                  value: $(params.eaasSpaceSecretRef)
                 - name: version
                   value: "4.17.0"
                 - name: instanceType
                   value: "m5.xlarge"
+        params:
+          - name: eaasSpaceSecretRef
+            value: $(tasks.provision-eaas-space.results.secretRef)
+        runAfter:
+          - provision-eaas-space
 
       - name: test-cluster
-        runAfter:
-          - provision-cluster
         taskSpec:
-          volumes:
-            - name: credentials
-              emptyDir: {}
+          params:
+            - name: eaasSpaceSecretRef
+              type: string
+            - name: clusterName
+              type: string
           steps:
-            - name: get-kubeconfig
+            - name: get-credentials
               ref:
                 resolver: git
                 params:
@@ -89,19 +104,19 @@ spec:
                     value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
               params:
                 - name: eaasSpaceSecretRef
-                  value: $(tasks.provision-eaas-space.results.secretRef)
+                  value: $(params.eaasSpaceSecretRef)
                 - name: clusterName
-                  value: $(tasks.provision-cluster.results.clusterName)
+                  value: $(params.clusterName)
                 - name: credentials
-                  value: credentials
+                  value: creds
 
             - name: verify-cluster
               image: quay.io/konflux-ci/appstudio-utils:latest
               env:
                 - name: KUBECONFIG
-                  value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
+                  value: /credentials/$(steps.get-credentials.results.kubeconfig)
               volumeMounts:
-                - name: credentials
+                - name: creds
                   mountPath: /credentials
               script: |
                 #!/bin/bash
@@ -120,3 +135,15 @@ spec:
 
                 echo ""
                 echo "✅ Cluster is accessible and ready!"
+
+          volumes:
+            - name: creds
+              emptyDir: {}
+
+        params:
+          - name: eaasSpaceSecretRef
+            value: $(tasks.provision-eaas-space.results.secretRef)
+          - name: clusterName
+            value: $(tasks.provision-cluster.results.clusterName)
+        runAfter:
+          - provision-cluster
