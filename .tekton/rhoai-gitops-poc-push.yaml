@@ -13,35 +13,13 @@ metadata:
     pipelinesascode.tekton.dev/on-comment: "^/test-integration"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
-  serviceAccountName: build-pipeline-rhoai-gitops-poc
   taskRunTemplate:
+    serviceAccountName: build-pipeline-rhoai-gitops-poc
     podTemplate:
       env:
         - name: HOME
           value: /tekton/home
-  taskRunSpecs:
-    - pipelineTaskName: provision-eaas-space
-      podTemplate:
-        volumes:
-          - name: workspace
-            emptyDir: {}
-      stepSpecs:
-        - name: request-space
-          volumeMounts:
-            - name: workspace
-              mountPath: /workspace/source
-          workingDir: /workspace/source
-  params:
-    - name: git-url
-      value: "{{ repo_url }}"
-    - name: git-revision
-      value: "{{ revision }}"
   pipelineSpec:
-    params:
-      - name: git-url
-        type: string
-      - name: git-revision
-        type: string
     tasks:
       - name: provision-eaas-space
         taskRef:
@@ -66,11 +44,6 @@ spec:
           results:
             - name: clusterName
               value: $(steps.create-cluster.results.clusterName)
-          stepTemplate:
-            env:
-              - name: HOME
-                value: /tekton/home
-            workingDir: /workspace
           steps:
             - name: create-cluster
               ref:
