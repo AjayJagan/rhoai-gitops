@@ -1,15 +1,184 @@
-name: Kustomize Validation
+---
+name: Validate GitOps Manifests
+
 on:
+  pull_request:
   push:
     branches:
       - main
-  pull_request:
-    branches:
-      - main
+  workflow_dispatch:
+
 jobs:
-  validate:
+  validation:
+    name: Static Validation
     runs-on: ubuntu-latest
+    outputs:
+      yaml-status: ${{ steps.yaml-check.outcome }}
+      yaml-details: ${{ steps.yaml-check.outputs.details }}
+      kustomize-status: ${{ steps.kustomize-check.outcome }}
+      kustomize-details: ${{ steps.kustomize-check.outputs.details }}
+      lint-status: ${{ steps.lint-check.outcome }}
+      lint-details: ${{ steps.lint-check.outputs.details }}
     steps:
-      - uses: actions/checkout@v2
-      - name: Validate Kustomize
-        run: make validate
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install validation tools
+        run: make tools
+
+      - name: Run YAML validation
+        id: yaml-check
+        continue-on-error: true
+        run: |
+          OUTPUT=$(make validate-yaml 2>&1) || {
+            echo "details<<EOF" >> $GITHUB_OUTPUT
+            echo "$OUTPUT" | tail -20 >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          echo "details=Syntax and formatting validation passed" >> $GITHUB_OUTPUT
+
+      - name: Run Kustomize build validation
+        id: kustomize-check
+        continue-on-error: true
+        run: |
+          OUTPUT=$(make validate-kustomize 2>&1) || {
+            echo "details<<EOF" >> $GITHUB_OUTPUT
+            echo "$OUTPUT" | tail -20 >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          echo "details=All kustomization layers built successfully" >> $GITHUB_OUTPUT
+
+      - name: Run best practices linting
+        id: lint-check
+        continue-on-error: true
+        run: |
+          OUTPUT=$(make validate-lint 2>&1) || {
+            echo "details<<EOF" >> $GITHUB_OUTPUT
+            echo "$OUTPUT" | tail -20 >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            exit 1
+          }
+          echo "details=Security and best practices checks passed" >> $GITHUB_OUTPUT
+
+  validation-summary:
+    name: Validation Summary
+    runs-on: ubuntu-latest
+    needs: [validation]
+    if: always()
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Check validation results
+        id: check
+        run: |
+          YAML_STATUS="${{ needs.validation.outputs.yaml-status }}"
+          KUSTOMIZE_STATUS="${{ needs.validation.outputs.kustomize-status }}"
+          LINT_STATUS="${{ needs.validation.outputs.lint-status }}"
+
+          if [[ "$YAML_STATUS" == "success" && "$KUSTOMIZE_STATUS" == "success" && "$LINT_STATUS" == "success" ]]; then
+            echo "All static validations passed!"
+            echo "overall_status=success" >> $GITHUB_OUTPUT
+          else
+            echo "Some validations failed"
+            echo "overall_status=failure" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post PR comment with validation results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const yamlStatus = '${{ needs.validation.outputs.yaml-status }}';
+            const yamlDetails = `${{ needs.validation.outputs.yaml-details }}`;
+            const kustomizeStatus = '${{ needs.validation.outputs.kustomize-status }}';
+            const kustomizeDetails = `${{ needs.validation.outputs.kustomize-details }}`;
+            const lintStatus = '${{ needs.validation.outputs.lint-status }}';
+            const lintDetails = `${{ needs.validation.outputs.lint-details }}`;
+
+            const statusIcon = (status) => status === 'success' ? '✅' : '❌';
+            const statusText = (status) => status === 'success' ? 'Passed' : 'Failed';
+
+            const allPassed = yamlStatus === 'success' && kustomizeStatus === 'success' && lintStatus === 'success';
+            const overallStatus = allPassed ? '✅ All static validations passed!' : '❌ Some validations failed';
+
+            // Format details - if failed, show in code block for readability
+            const formatDetails = (status, details) => {
+              if (status === 'success') {
+                return details;
+              }
+              // Escape backticks and show error in expandable section
+              const escaped = details.replace(/`/g, '\\`');
+              return `<details><summary>Show error</summary>\n\n\`\`\`\n${escaped}\n\`\`\`\n</details>`;
+            };
+
+            const comment = `## Tier 1 Validation Results (GitHub Actions)
+
+            ${overallStatus}
+
+            | Check | Status | Details |
+            |-------|--------|---------|
+            | YAML Lint | ${statusIcon(yamlStatus)} ${statusText(yamlStatus)} | ${formatDetails(yamlStatus, yamlDetails)} |
+            | Kustomize Build | ${statusIcon(kustomizeStatus)} ${statusText(kustomizeStatus)} | ${formatDetails(kustomizeStatus, kustomizeDetails)} |
+            | Best Practices | ${statusIcon(lintStatus)} ${statusText(lintStatus)} | ${formatDetails(lintStatus, lintDetails)} |
+
+            ${allPassed ? ' **Tier 2 Validation**: Triggered Konflux integration test on ephemeral OpenShift cluster...' : '⚠️ **Tier 2 Validation**: Skipped (fix Tier 1 issues first)'}
+
+            <details>
+            <summary>View workflow run</summary>
+
+            [Workflow run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            </details>
+            `;
+
+            // Find existing comment
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const botComment = comments.find(comment =>
+              comment.user.type === 'Bot' &&
+              comment.body.includes('Tier 1 Validation Results')
+            );
+
+            // Update or create comment
+            if (botComment) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: botComment.id,
+                body: comment
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: comment
+              });
+            }
+
+      - name: Fail workflow if validations failed
+        if: steps.check.outputs.overall_status == 'failure'
+        run: |
+          echo "One or more validations failed. See PR comment for details."
+          exit 1
+
+      - name: Trigger Konflux cluster validation
+        if: |
+          github.event_name == 'pull_request' &&
+          steps.check.outputs.overall_status == 'success'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: '/validate-dependencies'
+            });
+
+            console.log(' Triggered cluster validation tests via /validate-dependencies comment');

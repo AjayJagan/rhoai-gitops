@@ -1,0 +1,44 @@
+---
+# Configuration for kube-linter
+# https://docs.kubelinter.io/#/configuring-kubelinter
+# Based on: https://github.com/opendatahub-io/opendatahub-operator/blob/main/.kube-linter.yaml
+
+checks:
+  # Disable default checks to have explicit control
+  doNotAutoAddDefaults: true
+  addAllBuiltIn: false
+
+  # Only include security-critical checks relevant to operator subscriptions
+  include:
+    - "privileged-container"
+    - "privileged-ports"
+    - "cluster-admin-role-binding"
+    - "wildcard-in-rules"
+    - "unsafe-proc-mount"
+    - "unsafe-sysctls"
+    - "latest-tag"
+
+customChecks:
+  - name: "no-system-group-binding"
+    description: "Ensure ClusterRoleBindings do not target system groups"
+    remediation: "Remove references to system groups (e.g., system:authenticated, system:unauthenticated) from ClusterRoleBinding subjects"
+    template: "cel-expression"
+    scope:
+      objectKinds:
+        - ClusterRoleBinding
+    params:
+      check: |
+        has(object.subjects) && dyn(object.subjects).exists(s, s.kind == "Group" && s.name.startsWith("system:"))
+          ? "ClusterRoleBinding references system group"
+          : ""
+
+# Ignore specific files or directories
+ignore:
+  - "bin/"
+  - ".git/"
+  - "docs/"
+  - "*.md"
+  - "scripts/"
+  - ".github/"
+  - ".claude/"
+  - ".tekton/"
