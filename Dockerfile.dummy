@@ -1,0 +1,5 @@
+# Dummy Dockerfile for Konflux Component
+# This repository contains GitOps manifests only, no container image is built.
+# This file is required by the Konflux Component resource.
+
+FROM scratch

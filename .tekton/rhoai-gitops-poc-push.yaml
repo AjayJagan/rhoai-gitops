@@ -1,0 +1,143 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: rhoai-integration-{{ revision }}
+  labels:
+    appstudio.openshift.io/application: gitops-poc
+    appstudio.openshift.io/component: rhoai-gitops-poc
+    pipelines.appstudio.openshift.io/type: test
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-comment: "^/test-integration"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+spec:
+  serviceAccountName: build-pipeline-rhoai-gitops-poc
+  taskRunTemplate:
+    podTemplate:
+      env:
+        - name: HOME
+          value: /tekton/home
+  taskRunSpecs:
+    - pipelineTaskName: provision-eaas-space
+      podTemplate:
+        volumes:
+          - name: workspace
+            emptyDir: {}
+      stepSpecs:
+        - name: provision-space
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          workingDir: /workspace
+  params:
+    - name: git-url
+      value: "{{ repo_url }}"
+    - name: git-revision
+      value: "{{ revision }}"
+  pipelineSpec:
+    params:
+      - name: git-url
+        type: string
+      - name: git-revision
+        type: string
+    tasks:
+      - name: provision-eaas-space
+        taskRef:
+          resolver: git
+          params:
+            - name: url
+              value: https://github.com/konflux-ci/build-definitions.git
+            - name: revision
+              value: main
+            - name: pathInRepo
+              value: task/eaas-provision-space/0.1/eaas-provision-space.yaml
+        params:
+          - name: ownerName
+            value: $(context.pipelineRun.name)
+          - name: ownerUid
+            value: $(context.pipelineRun.uid)
+
+      - name: provision-cluster
+        runAfter:
+          - provision-eaas-space
+        taskSpec:
+          results:
+            - name: clusterName
+              value: $(steps.create-cluster.results.clusterName)
+          stepTemplate:
+            env:
+              - name: HOME
+                value: /tekton/home
+            workingDir: /workspace
+          steps:
+            - name: create-cluster
+              ref:
+                resolver: git
+                params:
+                  - name: url
+                    value: https://github.com/konflux-ci/build-definitions.git
+                  - name: revision
+                    value: main
+                  - name: pathInRepo
+                    value: stepactions/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
+              params:
+                - name: eaasSpaceSecretRef
+                  value: $(tasks.provision-eaas-space.results.secretRef)
+                - name: version
+                  value: "4.17.0"
+                - name: instanceType
+                  value: "m5.xlarge"
+
+      - name: verify-cluster
+        runAfter:
+          - provision-cluster
+        taskSpec:
+          volumes:
+            - name: credentials
+              emptyDir: {}
+          steps:
+            - name: get-kubeconfig
+              ref:
+                resolver: git
+                params:
+                  - name: url
+                    value: https://github.com/konflux-ci/build-definitions.git
+                  - name: revision
+                    value: main
+                  - name: pathInRepo
+                    value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
+              params:
+                - name: eaasSpaceSecretRef
+                  value: $(tasks.provision-eaas-space.results.secretRef)
+                - name: clusterName
+                  value: $(tasks.provision-cluster.results.clusterName)
+                - name: credentials
+                  value: credentials
+
+            - name: verify-cluster-access
+              image: quay.io/konflux-ci/appstudio-utils:latest
+              env:
+                - name: KUBECONFIG
+                  value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
+              volumeMounts:
+                - name: credentials
+                  mountPath: /credentials
+              script: |
+                #!/bin/bash
+                set -e
+
+                echo "=== Cluster Information ==="
+                kubectl version --short || kubectl version
+
+                echo ""
+                echo "=== Cluster Nodes ==="
+                kubectl get nodes
+
+                echo ""
+                echo "=== Namespaces ==="
+                kubectl get namespaces | head -20
+
+                echo ""
+                echo "✅ Ephemeral cluster provisioned and accessible!"
