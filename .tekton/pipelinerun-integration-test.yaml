@@ -17,6 +17,18 @@ spec:
       env:
         - name: HOME
           value: /tekton/home
+  taskRunSpecs:
+    - pipelineTaskName: provision-eaas-space
+      podTemplate:
+        volumes:
+          - name: workspace
+            emptyDir: {}
+      stepSpecs:
+        - name: provision-space
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+          workingDir: /workspace
   params:
     - name: git-url
       value: "{{ repo_url }}"
