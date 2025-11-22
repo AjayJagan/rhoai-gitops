@@ -13,13 +13,19 @@ metadata:
     pipelinesascode.tekton.dev/on-comment: "^/test-integration"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
+  params:
+    - name: git-url
+      value: "{{repo_url}}"
+    - name: revision
+      value: "{{revision}}"
   taskRunTemplate:
     serviceAccountName: build-pipeline-rhoai-gitops-poc
-    podTemplate:
-      env:
-        - name: HOME
-          value: /tekton/home
   pipelineSpec:
+    params:
+      - name: git-url
+        type: string
+      - name: revision
+        type: string
     tasks:
       - name: provision-eaas-space
         taskRef:
@@ -44,6 +50,9 @@ spec:
           results:
             - name: clusterName
               value: $(steps.create-cluster.results.clusterName)
+          volumes:
+            - name: credentials
+              emptyDir: {}
           steps:
             - name: create-cluster
               ref:
@@ -63,12 +72,32 @@ spec:
                 - name: instanceType
                   value: "m5.xlarge"
 
-      - name: verify-cluster
+            - name: get-kubeconfig
+              ref:
+                resolver: git
+                params:
+                  - name: url
+                    value: https://github.com/konflux-ci/build-definitions.git
+                  - name: revision
+                    value: main
+                  - name: pathInRepo
+                    value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
+              params:
+                - name: eaasSpaceSecretRef
+                  value: $(tasks.provision-eaas-space.results.secretRef)
+                - name: clusterName
+                  value: $(steps.create-cluster.results.clusterName)
+                - name: credentials
+                  value: credentials
+
+      - name: deploy-and-verify-dependencies
         runAfter:
           - provision-cluster
         taskSpec:
           volumes:
             - name: credentials
+              emptyDir: {}
+            - name: workspace
               emptyDir: {}
           steps:
             - name: get-kubeconfig
@@ -89,28 +118,82 @@ spec:
                 - name: credentials
                   value: credentials
 
-            - name: verify-cluster-access
+            - name: verify-cluster-and-clone
               image: quay.io/konflux-ci/appstudio-utils:latest
+              workingDir: /workspace
               env:
                 - name: KUBECONFIG
                   value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
               volumeMounts:
                 - name: credentials
                   mountPath: /credentials
+                - name: workspace
+                  mountPath: /workspace
               script: |
                 #!/bin/bash
                 set -e
 
-                echo "=== Cluster Information ==="
+                echo "=== Verifying cluster access ==="
                 kubectl version --short || kubectl version
-
-                echo ""
-                echo "=== Cluster Nodes ==="
                 kubectl get nodes
+                echo "✅ Cluster is accessible"
 
                 echo ""
-                echo "=== Namespaces ==="
-                kubectl get namespaces | head -20
+                echo "=== Cloning repository ==="
+                git clone $(params.git-url) repo
+                cd repo
+                git checkout $(params.git-revision)
+                echo "✅ Repository cloned"
+
+            - name: apply-dependencies
+              image: quay.io/konflux-ci/appstudio-utils:latest
+              workingDir: /workspace/repo
+              env:
+                - name: KUBECONFIG
+                  value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
+              volumeMounts:
+                - name: credentials
+                  mountPath: /credentials
+                - name: workspace
+                  mountPath: /workspace
+              script: |
+                #!/bin/bash
+                set -e
+
+                echo "=== Installing kustomize ==="
+                curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
+                chmod +x kustomize
+                mv kustomize /usr/local/bin/
 
                 echo ""
-                echo "✅ Ephemeral cluster provisioned and accessible!"
+                echo "=== Applying dependencies ==="
+                kustomize build dependencies | kubectl apply -f -
+
+                echo ""
+                echo "✅ Dependencies applied successfully"
+
+            - name: verify-dependencies
+              image: quay.io/konflux-ci/appstudio-utils:latest
+              workingDir: /workspace/repo
+              env:
+                - name: KUBECONFIG
+                  value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
+              volumeMounts:
+                - name: credentials
+                  mountPath: /credentials
+                - name: workspace
+                  mountPath: /workspace
+              script: |
+                #!/bin/bash
+                set -e
+
+                echo "=== Running dependency verification ==="
+                bash scripts/verify-dependencies.sh
+
+                echo ""
+                echo "✅ All dependencies verified successfully!"
+        params:
+          - name: git-url
+            value: $(params.git-url)
+          - name: git-revision
+            value: $(params.revision)

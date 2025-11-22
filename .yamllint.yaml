@@ -1,0 +1,39 @@
+---
+extends: default
+
+rules:
+  # Allow longer lines for URLs and complex manifests
+  line-length:
+    max: 130
+    level: warning
+
+  # Disable document-start requirement (---) as it's not critical
+  document-start: disable
+
+  # Allow at least 1 space between comment and content
+  comments:
+    min-spaces-from-content: 1
+
+  # Allow truthy values (on/off, yes/no) commonly used in Kubernetes
+  truthy:
+    allowed-values: ['true', 'false', 'on', 'off', 'yes', 'no']
+    check-keys: false
+
+  # Indentation should be 2 spaces
+  indentation:
+    spaces: 2
+    indent-sequences: true
+
+  # Allow empty values (common in Kubernetes)
+  empty-values:
+    forbid-in-block-mappings: false
+    forbid-in-flow-mappings: false
+
+# Ignore directories
+ignore: |
+  bin/
+  .git/
+  docs/
+  scripts/
+  .github/
+  .claude/
