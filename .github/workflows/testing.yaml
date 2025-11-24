@@ -123,7 +123,7 @@ jobs:
             | Kustomize Build | ${statusIcon(kustomizeStatus)} ${statusText(kustomizeStatus)} | ${formatDetails(kustomizeStatus, kustomizeDetails)} |
             | Best Practices | ${statusIcon(lintStatus)} ${statusText(lintStatus)} | ${formatDetails(lintStatus, lintDetails)} |
 
-            ${allPassed ? '🚀 **Tier 2 Validation**: Triggered Konflux integration test on ephemeral OpenShift cluster...' : '⚠️ **Tier 2 Validation**: Skipped (fix Tier 1 issues first)'}
+            ${allPassed ? ' **Tier 2 Validation**: Triggered Konflux integration test on ephemeral OpenShift cluster...' : '⚠️ **Tier 2 Validation**: Skipped (fix Tier 1 issues first)'}
 
             <details>
             <summary>View workflow run</summary>
@@ -164,22 +164,21 @@ jobs:
       - name: Fail workflow if validations failed
         if: steps.check.outputs.overall_status == 'failure'
         run: |
-          echo "❌ One or more validations failed. See PR comment for details."
+          echo "One or more validations failed. See PR comment for details."
           exit 1
 
-      - name: Trigger Konflux integration test
+      - name: Trigger Konflux cluster validation
         if: |
           github.event_name == 'pull_request' &&
           steps.check.outputs.overall_status == 'success'
         uses: actions/github-script@v7
         with:
           script: |
-            // Post /test-integration comment to trigger Konflux pipeline
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
-              body: '/test-integration'
+              body: '/validate-dependencies'
             });
 
-            console.log('✅ Triggered Konflux integration test via /test-integration comment');
+            console.log(' Triggered cluster validation tests via /validate-dependencies comment');

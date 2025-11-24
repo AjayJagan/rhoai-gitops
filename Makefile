@@ -28,6 +28,7 @@ CLEANFILES += $(LOCALBIN)
 ## Tool Binaries
 KUSTOMIZE ?= $(LOCALBIN)/kustomize
 KUBE_LINTER ?= $(LOCALBIN)/kube-linter
+K8S_CLI ?= kubectl
 
 ## Tool Versions
 KUSTOMIZE_VERSION ?= v5.8.0
@@ -92,7 +93,7 @@ apply: kustomize ## Apply kustomize directory as passed as argument
 		echo "Error: FOLDER variable is required. Usage: make apply FOLDER=<path>"; \
 		exit 1; \
 	fi
-	$(KUSTOMIZE) build $(FOLDER) | kubectl apply $(KUBECTL_FLAGS) -f -
+	$(KUSTOMIZE) build $(FOLDER) | $(K8S_CLI) apply $(K8S_FLAGS) -f -
 	@echo ""
 	@echo "Kustomization $(FOLDER) applied successfully! ✓"
 
@@ -108,7 +109,7 @@ remove: kustomize ## Remove kustomize directory as passed as argument
 		echo "Error: FOLDER variable is required. Usage: make apply FOLDER=<path>"; \
 		exit 1; \
 	fi
-	$(KUSTOMIZE) build $(FOLDER) | kubectl delete $(KUBECTL_FLAGS) -f -
+	$(KUSTOMIZE) build $(FOLDER) | $(K8S_CLI) delete $(K8S_FLAGS) -f -
 
 .PHONY: remove-all-dependencies
 remove-all-dependencies:
@@ -119,7 +120,7 @@ remove-all-dependencies:
 
 .PHONY: dry-run
 dry-run: kustomize ## Dry run kustomize directory as passed as argument
-	@$(MAKE) apply FOLDER=$(FOLDER) KUBECTL_FLAGS="--dry-run=client -o yaml"
+	@$(MAKE) apply FOLDER=$(FOLDER) K8S_FLAGS="--dry-run=client -o yaml"
 
 .PHONY: clean
 clean:

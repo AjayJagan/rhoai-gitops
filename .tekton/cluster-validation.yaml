@@ -2,15 +2,15 @@
 apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
-  name: rhoai-integration-{{ revision }}
+  name: cluster-validation-pr{{ pull_request_number }}-{{ revision }}
   labels:
-    appstudio.openshift.io/application: gitops-poc
-    appstudio.openshift.io/component: rhoai-gitops-poc
+    appstudio.openshift.io/application: odh-gitops
+    appstudio.openshift.io/component: cluster-validation
     pipelines.appstudio.openshift.io/type: test
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"
     pipelinesascode.tekton.dev/on-target-branch: "[main]"
-    pipelinesascode.tekton.dev/on-comment: "^/test-integration"
+    pipelinesascode.tekton.dev/on-comment: "^/validate-dependencies"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
 spec:
   params:
@@ -19,7 +19,7 @@ spec:
     - name: revision
       value: "{{revision}}"
   taskRunTemplate:
-    serviceAccountName: build-pipeline-rhoai-gitops-poc
+    serviceAccountName: build-pipeline-cluster-validation
   pipelineSpec:
     params:
       - name: git-url
@@ -68,7 +68,7 @@ spec:
                 - name: eaasSpaceSecretRef
                   value: $(tasks.provision-eaas-space.results.secretRef)
                 - name: version
-                  value: "4.17.0"
+                  value: "4.19.0"
                 - name: instanceType
                   value: "m5.xlarge"
 
@@ -134,8 +134,8 @@ spec:
                 set -e
 
                 echo "=== Verifying cluster access ==="
-                kubectl version --short || kubectl version
-                kubectl get nodes
+                oc version
+                oc get nodes
                 echo "✅ Cluster is accessible"
 
                 echo ""
@@ -145,7 +145,7 @@ spec:
                 git checkout $(params.git-revision)
                 echo "✅ Repository cloned"
 
-            - name: apply-dependencies
+            - name: apply-and-verify-dependencies
               image: quay.io/konflux-ci/appstudio-utils:latest
               workingDir: /workspace/repo
               env:
@@ -160,38 +160,11 @@ spec:
                 #!/bin/bash
                 set -e
 
-                echo "=== Installing kustomize ==="
-                curl -s "https://raw.githubusercontent.com/kubernetes-sigs/kustomize/master/hack/install_kustomize.sh" | bash
-                chmod +x kustomize
-                mv kustomize /usr/local/bin/
+                echo "=== Applying and verifying dependencies ==="
+                make apply-and-verify-dependencies K8S_CLI=oc
 
                 echo ""
-                echo "=== Applying dependencies ==="
-                kustomize build dependencies | kubectl apply -f -
-
-                echo ""
-                echo "✅ Dependencies applied successfully"
-
-            - name: verify-dependencies
-              image: quay.io/konflux-ci/appstudio-utils:latest
-              workingDir: /workspace/repo
-              env:
-                - name: KUBECONFIG
-                  value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
-              volumeMounts:
-                - name: credentials
-                  mountPath: /credentials
-                - name: workspace
-                  mountPath: /workspace
-              script: |
-                #!/bin/bash
-                set -e
-
-                echo "=== Running dependency verification ==="
-                bash scripts/verify-dependencies.sh
-
-                echo ""
-                echo "✅ All dependencies verified successfully!"
+                echo "✅ All dependencies applied and verified successfully!"
         params:
           - name: git-url
             value: $(params.git-url)
