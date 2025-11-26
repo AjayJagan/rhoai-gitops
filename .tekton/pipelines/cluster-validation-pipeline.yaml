@@ -1,0 +1,161 @@
+---
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: cluster-validation
+spec:
+  params:
+    - name: git-url
+      type: string
+    - name: revision
+      type: string
+    - name: ocp-version
+      type: string
+    - name: instance-type
+      type: string
+      default: "m5.xlarge"
+  tasks:
+    - name: provision-eaas-space
+      taskRef:
+        resolver: git
+        params:
+          - name: url
+            value: https://github.com/konflux-ci/build-definitions.git
+          - name: revision
+            value: main
+          - name: pathInRepo
+            value: task/eaas-provision-space/0.1/eaas-provision-space.yaml
+      params:
+        - name: ownerName
+          value: $(context.pipelineRun.name)
+        - name: ownerUid
+          value: $(context.pipelineRun.uid)
+
+    - name: provision-and-validate
+      runAfter:
+        - provision-eaas-space
+      taskSpec:
+        params:
+          - name: git-url
+            type: string
+          - name: git-revision
+            type: string
+          - name: ocp-version
+            type: string
+          - name: instance-type
+            type: string
+          - name: eaas-space-secret-ref
+            type: string
+        results:
+          - name: clusterName
+            description: Name of the provisioned cluster
+          - name: status
+            description: Overall validation status
+        volumes:
+          - name: credentials
+            emptyDir: {}
+          - name: workspace
+            emptyDir: {}
+        steps:
+          - name: create-cluster
+            ref:
+              resolver: git
+              params:
+                - name: url
+                  value: https://github.com/konflux-ci/build-definitions.git
+                - name: revision
+                  value: main
+                - name: pathInRepo
+                  value: stepactions/eaas-create-ephemeral-cluster-hypershift-aws/0.1/eaas-create-ephemeral-cluster-hypershift-aws.yaml
+            params:
+              - name: eaasSpaceSecretRef
+                value: $(params.eaas-space-secret-ref)
+              - name: version
+                value: $(params.ocp-version)
+              - name: instanceType
+                value: $(params.instance-type)
+
+          - name: get-kubeconfig
+            ref:
+              resolver: git
+              params:
+                - name: url
+                  value: https://github.com/konflux-ci/build-definitions.git
+                - name: revision
+                  value: main
+                - name: pathInRepo
+                  value: stepactions/eaas-get-ephemeral-cluster-credentials/0.1/eaas-get-ephemeral-cluster-credentials.yaml
+            params:
+              - name: eaasSpaceSecretRef
+                value: $(params.eaas-space-secret-ref)
+              - name: clusterName
+                value: $(steps.create-cluster.results.clusterName)
+              - name: credentials
+                value: credentials
+
+          - name: verify-cluster-and-clone
+            image: quay.io/konflux-ci/appstudio-utils:latest
+            workingDir: /workspace
+            env:
+              - name: KUBECONFIG
+                value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
+              - name: OCP_VERSION
+                value: $(params.ocp-version)
+            volumeMounts:
+              - name: credentials
+                mountPath: /credentials
+              - name: workspace
+                mountPath: /workspace
+            script: |
+              #!/bin/bash
+              set -e
+
+              echo "=== Verifying cluster access (OCP ${OCP_VERSION}) ==="
+              oc version
+              oc get nodes
+              echo "✅ Cluster is accessible"
+
+              echo ""
+              echo "=== Cloning repository ==="
+              git clone $(params.git-url) repo
+              cd repo
+              git checkout $(params.git-revision)
+              echo "✅ Repository cloned"
+
+          - name: apply-and-verify-dependencies
+            image: quay.io/konflux-ci/appstudio-utils:latest
+            workingDir: /workspace/repo
+            env:
+              - name: KUBECONFIG
+                value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
+              - name: OCP_VERSION
+                value: $(params.ocp-version)
+            volumeMounts:
+              - name: credentials
+                mountPath: /credentials
+              - name: workspace
+                mountPath: /workspace
+            script: |
+              #!/bin/bash
+              set -e
+
+              echo "=== Applying and verifying dependencies on OCP ${OCP_VERSION} ==="
+              make apply-and-verify-dependencies K8S_CLI=oc
+
+              echo ""
+              echo "✅ All dependencies applied and verified successfully on OCP ${OCP_VERSION}!"
+
+              # Set results
+              echo -n "$(steps.create-cluster.results.clusterName)" | tee $(results.clusterName.path)
+              echo -n "success" | tee $(results.status.path)
+      params:
+        - name: git-url
+          value: $(params.git-url)
+        - name: git-revision
+          value: $(params.revision)
+        - name: ocp-version
+          value: $(params.ocp-version)
+        - name: instance-type
+          value: $(params.instance-type)
+        - name: eaas-space-secret-ref
+          value: $(tasks.provision-eaas-space.results.secretRef)

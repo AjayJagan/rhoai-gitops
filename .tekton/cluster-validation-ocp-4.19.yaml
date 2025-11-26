@@ -1,0 +1,33 @@
+---
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: cluster-validation-ocp419-pr{{ pull_request_number }}-{{ revision }}
+  labels:
+    appstudio.openshift.io/application: odh-gitops
+    appstudio.openshift.io/component: cluster-validation-ocp-4.19
+    pipelines.appstudio.openshift.io/type: test
+  annotations:
+    pipelinesascode.tekton.dev/on-event: "[pull_request]"
+    pipelinesascode.tekton.dev/on-target-branch: "[main]"
+    pipelinesascode.tekton.dev/on-comment: "^/validate-dependencies"
+    pipelinesascode.tekton.dev/max-keep-runs: "3"
+spec:
+  pipelineRef:
+    resolver: git
+    params:
+      - name: url
+        value: "{{repo_url}}"
+      - name: revision
+        value: "{{revision}}"
+      - name: pathInRepo
+        value: .tekton/pipelines/cluster-validation-pipeline.yaml
+  params:
+    - name: git-url
+      value: "{{repo_url}}"
+    - name: revision
+      value: "{{revision}}"
+    - name: ocp-version
+      value: "4.19.0"
+  taskRunTemplate:
+    serviceAccountName: build-pipeline-cluster-validation
