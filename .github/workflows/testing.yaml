@@ -144,22 +144,22 @@ jobs:
               comment.body.includes('Tier 1 Validation Results')
             );
 
-            // Update or create comment
+            // Delete existing comment if found
             if (botComment) {
-              await github.rest.issues.updateComment({
+              await github.rest.issues.deleteComment({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 comment_id: botComment.id,
-                body: comment
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body: comment
               });
             }
+
+            // Always create a new comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: comment
+            });
 
       - name: Fail workflow if validations failed
         if: steps.check.outputs.overall_status == 'failure'
