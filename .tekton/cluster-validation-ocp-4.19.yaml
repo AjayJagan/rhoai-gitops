@@ -30,4 +30,4 @@ spec:
     - name: ocp-version
       value: "4.19.0"
   taskRunTemplate:
-    serviceAccountName: build-pipeline-cluster-validation
+    serviceAccountName: build-pipeline-cluster-validation-ocp-419
