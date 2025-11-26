@@ -4,8 +4,8 @@ kind: PipelineRun
 metadata:
   name: cluster-validation-ocp419-pr{{ pull_request_number }}-{{ revision }}
   labels:
-    appstudio.openshift.io/application: odh-gitops
-    appstudio.openshift.io/component: cluster-validation-ocp-4.19
+    appstudio.openshift.io/application: gitops-poc
+    appstudio.openshift.io/component: cluster-validation-ocp-419
     pipelines.appstudio.openshift.io/type: test
   annotations:
     pipelinesascode.tekton.dev/on-event: "[pull_request]"
