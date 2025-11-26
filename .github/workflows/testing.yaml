@@ -84,71 +84,29 @@ jobs:
             echo "overall_status=failure" >> $GITHUB_OUTPUT
           fi
 
-      - name: Prepare validation summary
-        if: github.event_name == 'pull_request'
-        id: summary
-        run: |
-          YAML_STATUS="${{ needs.validation.outputs.yaml-status }}"
-          YAML_DETAILS="${{ needs.validation.outputs.yaml-details }}"
-          KUSTOMIZE_STATUS="${{ needs.validation.outputs.kustomize-status }}"
-          KUSTOMIZE_DETAILS="${{ needs.validation.outputs.kustomize-details }}"
-          LINT_STATUS="${{ needs.validation.outputs.lint-status }}"
-          LINT_DETAILS="${{ needs.validation.outputs.lint-details }}"
-
-          # Helper functions
-          status_icon() { [ "$1" = "success" ] && echo "✅" || echo "❌"; }
-          status_text() { [ "$1" = "success" ] && echo "Passed" || echo "Failed"; }
-
-          format_details() {
-            local status=$1
-            local details=$2
-            if [ "$status" = "success" ]; then
-              echo "$details"
-            else
-              echo "<details><summary>Show error</summary>"
-              echo ""
-              echo '```'
-              echo "$details"
-              echo '```'
-              echo "</details>"
-            fi
-          }
-
-          # Check if all passed
-          if [[ "$YAML_STATUS" == "success" && "$KUSTOMIZE_STATUS" == "success" && "$LINT_STATUS" == "success" ]]; then
-            OVERALL_STATUS="✅ All static validations passed!"
-            TIER2_STATUS="**Tier 2 Validation**: Triggered Konflux integration tests on ephemeral OpenShift clusters (OCP 4.19 & 4.20)..."
-          else
-            OVERALL_STATUS="❌ Some validations failed"
-            TIER2_STATUS="⚠️ **Tier 2 Validation**: Skipped (fix Tier 1 issues first)"
-          fi
-
-          # Build comment body
-          cat << EOF > comment.md
-          ## Tier 1 Validation Results (GitHub Actions)
-
-          ${OVERALL_STATUS}
-
-          | Check | Status | Details |
-          |-------|--------|---------|
-          | YAML Lint | $(status_icon "$YAML_STATUS") $(status_text "$YAML_STATUS") | $(format_details "$YAML_STATUS" "$YAML_DETAILS") |
-          | Kustomize Build | $(status_icon "$KUSTOMIZE_STATUS") $(status_text "$KUSTOMIZE_STATUS") | $(format_details "$KUSTOMIZE_STATUS" "$KUSTOMIZE_DETAILS") |
-          | Best Practices | $(status_icon "$LINT_STATUS") $(status_text "$LINT_STATUS") | $(format_details "$LINT_STATUS" "$LINT_DETAILS") |
-
-          ${TIER2_STATUS}
-
-          <details>
-          <summary>View workflow run</summary>
-
-          [Workflow run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
-          </details>
-          EOF
-
       - name: Post PR comment with validation results
         if: github.event_name == 'pull_request'
         uses: thollander/actions-comment-pull-request@v3
         with:
-          filePath: comment.md
+          mode: recreate
+          message: |
+            ## Tier 1 Validation Results (GitHub Actions)
+
+            ${{ (needs.validation.outputs.yaml-status == 'success' && needs.validation.outputs.kustomize-status == 'success' && needs.validation.outputs.lint-status == 'success') && '✅ All static validations passed!' || '❌ Some validations failed' }}
+
+            | Check | Status | Details |
+            |-------|--------|---------|
+            | YAML Lint | ${{ needs.validation.outputs.yaml-status == 'success' && '✅ Passed' || '❌ Failed' }} | ${{ needs.validation.outputs.yaml-details }} |
+            | Kustomize Build | ${{ needs.validation.outputs.kustomize-status == 'success' && '✅ Passed' || '❌ Failed' }} | ${{ needs.validation.outputs.kustomize-details }} |
+            | Best Practices | ${{ needs.validation.outputs.lint-status == 'success' && '✅ Passed' || '❌ Failed' }} | ${{ needs.validation.outputs.lint-details }} |
+
+            ${{ (needs.validation.outputs.yaml-status == 'success' && needs.validation.outputs.kustomize-status == 'success' && needs.validation.outputs.lint-status == 'success') && '**Tier 2 Validation**: Triggered Konflux integration tests on ephemeral OpenShift cluster (OCP 4.19)...' || '⚠️ **Tier 2 Validation**: Skipped (fix Tier 1 issues first)' }}
+
+            <details>
+            <summary>View workflow run</summary>
+
+            [Workflow run #${{ github.run_number }}](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+            </details>
           comment_tag: tier1-validation
 
       - name: Fail workflow if validations failed
@@ -163,5 +121,6 @@ jobs:
           steps.check.outputs.overall_status == 'success'
         uses: thollander/actions-comment-pull-request@v3
         with:
+          mode: recreate
           message: '/validate-dependencies'
           comment_tag: trigger-tier2-validation

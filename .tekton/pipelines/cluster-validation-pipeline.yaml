@@ -130,6 +130,8 @@ spec:
                 value: /credentials/$(steps.get-kubeconfig.results.kubeconfig)
               - name: OCP_VERSION
                 value: $(params.ocp-version)
+              - name: CLUSTER_NAME
+                value: $(steps.create-cluster.results.clusterName)
             volumeMounts:
               - name: credentials
                 mountPath: /credentials
@@ -146,7 +148,7 @@ spec:
               echo "✅ All dependencies applied and verified successfully on OCP ${OCP_VERSION}!"
 
               # Set results
-              echo -n "$(steps.create-cluster.results.clusterName)" | tee $(results.clusterName.path)
+              echo -n "${CLUSTER_NAME}" | tee $(results.clusterName.path)
               echo -n "success" | tee $(results.status.path)
       params:
         - name: git-url
